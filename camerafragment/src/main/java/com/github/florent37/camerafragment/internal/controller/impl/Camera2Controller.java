@@ -215,11 +215,11 @@ public class Camera2Controller implements CameraController<String>,
 
     @Override
     public void addZoom() {
-        //todo
+        camera2Manager.addZoom();
     }
 
     @Override
     public void deZoom() {
-        //todo
+        camera2Manager.deZoom();
     }
 }

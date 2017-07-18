@@ -4,6 +4,7 @@ import android.annotation.TargetApi;
 import android.content.Context;
 import android.graphics.ImageFormat;
 import android.graphics.Point;
+import android.graphics.Rect;
 import android.graphics.SurfaceTexture;
 import android.hardware.camera2.CameraAccessException;
 import android.hardware.camera2.CameraCaptureSession;
@@ -81,6 +82,9 @@ public final class Camera2Manager extends BaseCameraManager<String, TextureView.
     private SurfaceTexture texture;
     private Surface workingSurface;
     private ImageReader imageReader;
+    private Rect zoomRect;
+    private int zoomLevel = 1;
+
     private CameraDevice.StateCallback stateCallback = new CameraDevice.StateCallback() {
         @Override
         public void onOpened(CameraDevice cameraDevice) {
@@ -671,7 +675,8 @@ public final class Camera2Manager extends BaseCameraManager<String, TextureView.
 
             captureBuilder.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE);
             captureBuilder.set(CaptureRequest.JPEG_ORIENTATION, getPhotoOrientation(configurationProvider.getSensorPosition()));
-
+            if (zoomRect != null)
+                captureBuilder.set(CaptureRequest.SCALER_CROP_REGION, zoomRect);
             CameraCaptureSession.CaptureCallback CaptureCallback = new CameraCaptureSession.CaptureCallback() {
                 @Override
                 public void onCaptureCompleted(@NonNull CameraCaptureSession session,
@@ -825,14 +830,57 @@ public final class Camera2Manager extends BaseCameraManager<String, TextureView.
         return array;
     }
 
+    private void checkToResetZoomRect() throws CameraAccessException {
+        if (zoomRect != null) return;
+        zoomRect = manager.getCameraCharacteristics(getCurrentCameraId()).get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE);
+    }
+
     @Override
     public void addZoom() {
-        //TODO
+        try {
+            CameraCharacteristics characteristics = manager.getCameraCharacteristics(getCurrentCameraId());
+            float maxZoom = characteristics.get(CameraCharacteristics.SCALER_AVAILABLE_MAX_DIGITAL_ZOOM) *10;
+            Log.d(TAG, "max zoom: " + maxZoom);
+            if (maxZoom <= zoomLevel) return;
+            zoomLevel++;
+            handleZoomChanged();
+
+        } catch (CameraAccessException e) {
+            e.printStackTrace();
+        }
     }
 
     @Override
     public void deZoom() {
-        //TODO
+        if (zoomLevel <= 1) return;
+        zoomLevel--;
+        handleZoomChanged();
+    }
+
+    private void handleZoomChanged() {
+        try {
+            CameraCharacteristics characteristics = manager.getCameraCharacteristics(getCurrentCameraId());
+            float maxZoom = characteristics.get(CameraCharacteristics.SCALER_AVAILABLE_MAX_DIGITAL_ZOOM)*10;
+            Rect m = characteristics.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE);
+
+            int minW = (int) (m.width() / maxZoom);
+            int minH = (int) (m.height() / maxZoom);
+            int difW = m.width() - minW;
+            int difH = m.height() - minH;
+            int cropW = difW /100 *(int)zoomLevel;
+            int cropH = difH /100 *(int)zoomLevel;
+            cropW -= cropW & 3;
+            cropH -= cropH & 3;
+            zoomRect = new Rect(cropW, cropH, m.width() - cropW, m.height() - cropH);
+            Log.d(TAG,""+zoomRect.toString());
+            previewRequestBuilder.set(CaptureRequest.SCALER_CROP_REGION, zoomRect);
+
+            previewRequest = previewRequestBuilder.build();
+            captureSession.setRepeatingRequest(previewRequest, captureCallback, backgroundHandler);
+        } catch (CameraAccessException e) {
+            e.printStackTrace();
+        }
+
     }
 
     @IntDef({STATE_PREVIEW, STATE_WAITING_LOCK, STATE_WAITING_PRE_CAPTURE, STATE_WAITING_NON_PRE_CAPTURE, STATE_PICTURE_TAKEN})
